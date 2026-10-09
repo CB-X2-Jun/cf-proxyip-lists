@@ -80,13 +80,18 @@ def ipinfo_lookup(ip):
     if clean in _country_cache:
         return _country_cache[clean]
 
-    url = f"https://ipinfo.io/{urllib.parse.quote(clean)}?token={IPINFO_TOKEN}"
+    # 改用 Lite API
+    url = f"https://api.ipinfo.io/lite/{urllib.parse.quote(clean)}?token={IPINFO_TOKEN}"
+    
     country = None
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "proxyip-check/1.0"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            country = (data.get("country") or "").upper() or None
+            # Lite API 的字段名一般还是 country，但建议你 print 一下确认
+            country = (data.get("country_code") or "").upper() or None
+            # 如果是新版 Lite，有时返回的是 country_code，保险起见可以这么写：
+            # country = (data.get("country") or data.get("country_code") or "").upper() or None
     except urllib.error.HTTPError as e:
         if e.code == 429:
             print("    [ipinfo] 429 超限 → 回退到文件记录国家")
