@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="description" content="定时更新的 Cloudflare ProxyIP 列表（--resolve 反代 IP）">
-<title>ProxyIP List</title>
+<title>CF ProxyIP List</title>
 <link rel="stylesheet" href="https://cb-x2-jun.github.io/flag-icons/css/flag-icons.min.css"/>
 <style>
 :root {
@@ -69,7 +69,7 @@ select {
   border-radius: 14px; padding: 4px 10px; font-size: 13px;
   display: inline-flex; align-items: center; gap: 6px;
 }
-.tag span:last-child { cursor: pointer; }
+.tag .rm { cursor: pointer; }
 
 table {
   width: 100%; border-collapse: collapse;
@@ -99,7 +99,8 @@ button {
 .bar.yellow { background: var(--yellow); }
 .bar.red    { background: var(--red); }
 
-.exit-ip { color: #888; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.exit-ip { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: #666; }
+.ip-cell { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
 </style>
 </head>
 
@@ -130,23 +131,29 @@ button {
   <div class="select-box">
     排序：
     <select id="sortSelect">
-      <option value="default">默认</option>
+      <option value="default">默认（proxyip.txt 顺序）</option>
       <option value="latency">延迟</option>
       <option value="success">成功率</option>
     </select>
   </div>
 
   <div class="select-box">
-    <button class="export-btn" onclick="copyAll(true)">复制 IP:port</button>
-    <!-- <button class="export-btn" onclick="copyAll(false)">复制 --resolve 批量</button> -->
+    <button class="export-btn" onclick="copyAll('ip')">复制 IP:port</button>
+    <!-- <button class="export-btn" onclick="copyAll('resolve')">复制 --resolve 批量</button> -->
   </div>
 </div>
 
 <table>
 <thead>
 <tr>
-  <th>IP</th><th>端口</th><th>出口 IP</th><th>国家</th>
-  <th>延迟</th><th>成功率</th><th>上次检测</th><th>复制</th>
+  <th>IP</th>
+  <th>端口</th>
+  <th>出口 IP</th>
+  <th>国家</th>
+  <th>真延迟</th>
+  <th>成功率</th>
+  <th>上次检测</th>
+  <th>复制</th>
 </tr>
 </thead>
 <tbody id="tbody"></tbody>
@@ -173,6 +180,7 @@ let sortMethod = 'default';
 fetch('proxyips.json')
   .then(r => r.json())
   .then(d => {
+    // 保留数组原始顺序 = proxyip.txt 顺序
     data = d.map((i, idx) => ({ ...i, __index: idx }));
     init();
     render();
@@ -203,10 +211,19 @@ function renderTagGroup(id, set, withFlag) {
     const t = document.createElement('div');
     const code = withFlag ? data.find(i => i.country_cn === v)?.country : '';
     t.className = 'tag';
-    t.innerHTML = `${code ? `<span class="fi fi-${code.toLowerCase()}"></span>` : ''}${v}<span>×</span>`;
+    t.innerHTML = `${code ? `<span class="fi fi-${code.toLowerCase()}"></span>` : ''}${v}<span class="rm">×</span>`;
     t.lastChild.onclick = () => (set.delete(v), renderTags(), render());
     box.appendChild(t);
   });
+}
+
+/* ---------- 工具函数 ---------- */
+// IPv6 加方括号（不管原来有没有）
+function fmtHost(ip) {
+  if (!ip) return ip;
+  if (ip.startsWith('[')) return ip;
+  if (ip.includes(':')) return '[' + ip + ']';
+  return ip;
 }
 
 function rateBar(s, t) {
@@ -227,6 +244,7 @@ function updateStats(list) {
     `目前可用：${available} ｜ 可用国家数：${countries} ｜ 上次更新：${last ? ago(last) : '—'}`;
 }
 
+/* ---------- 渲染 ---------- */
 function render() {
   tbody.innerHTML = '';
   let list = data.filter(i =>
@@ -234,28 +252,37 @@ function render() {
     (!selectedPorts.size    || selectedPorts.has(String(i.port)))
   );
 
-  if (sortMethod === 'latency')
+  if (sortMethod === 'latency') {
+    // 只对本次 curl 结果按 ms 升序；同延迟按源文件顺序
     list = list.slice().sort((a, b) => a.latency - b.latency || a.__index - b.__index);
-  if (sortMethod === 'success')
-    list = list.slice().sort((a, b) => (b.success / b.total || 0) - (a.success / a.total || 0) || a.__index - b.__index);
+  } else if (sortMethod === 'success') {
+    list = list.slice().sort((a, b) =>
+      (b.success / b.total || 0) - (a.success / a.total || 0) || a.__index - b.__index);
+  } else {
+    // default：保持 proxyip.txt 原始顺序
+    list = list.slice().sort((a, b) => a.__index - b.__index);
+  }
 
   updateStats(list);
 
   list.forEach(i => {
     const rate = i.total < 3
-      ? '新IP (测试次数小于3)'
+      ? '新IP（测试次数<3）'
       : `${(i.success / i.total * 100).toFixed(1)}% (${i.success}/${i.total})`;
+
+    const hostFull = fmtHost(i.ip);
+    const copyVal  = `${hostFull}:${i.port}`;
 
     tbody.insertAdjacentHTML('beforeend', `
 <tr>
-  <td>${i.ip}</td>
+  <td class="ip-cell">${hostFull}</td>
   <td>${i.port}</td>
   <td class="exit-ip">${i.exit_ip || '—'}</td>
   <td><span class="country"><span class="fi fi-${i.country.toLowerCase()}"></span>${i.country_cn}</span></td>
   <td>${i.latency} ms${latencyBar(i.latency)}</td>
   <td>${rate}${rateBar(i.success, i.total)}</td>
   <td>${ago(i.last_check)}</td>
-  <td><button onclick="copy('${i.ip}:${i.port}')">复制</button></td>
+  <td><button onclick="copy('${copyVal}')">复制</button></td>
 </tr>`);
   });
 }
@@ -267,31 +294,33 @@ function getFilteredList() {
   );
 }
 
-function copyAll(asPlain) {
+/* ---------- 复制 ---------- */
+function copyAll(mode) {
   const list = getFilteredList();
   if (!list.length) { alert('当前筛选结果为空'); return; }
 
   const lines = list.map(i => {
-    // IPv6 在 --resolve 中需要保留方括号
-    const host = i.ip;
-    return asPlain
-      ? `${host}:${i.port}`
-      : `--resolve api64.ipify.org:${i.port}:${host}`;
+    const host = fmtHost(i.ip);
+    if (mode === 'resolve') {
+      return `--resolve api64.ipify.org:${i.port}:${host}`;
+    }
+    return `${host}:${i.port}`;
   });
 
   navigator.clipboard.writeText(lines.join('\n'))
     .then(() => alert(`已复制 ${lines.length} 条`));
 }
 
+function copy(t) {
+  navigator.clipboard.writeText(t).then(() => alert('已复制 ' + t));
+}
+
 function ago(ts) {
   if (!ts) return '—';
   const s = Date.now() / 1000 - ts;
-  return s < 60 ? `${s | 0} 秒前`
+  return s < 60   ? `${s | 0} 秒前`
        : s < 3600 ? `${s / 60 | 0} 分钟前`
        : `${s / 3600 | 0} 小时前`;
-}
-function copy(t) {
-  navigator.clipboard.writeText(t).then(() => alert('已复制 ' + t));
 }
 </script>
 </body>
