@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="description" content="定时更新的 Cloudflare ProxyIP 列表（--resolve 反代 IP）">
+<title>ProxyIP List</title>
+<link rel="stylesheet" href="https://cb-x2-jun.github.io/flag-icons/css/flag-icons.min.css"/>
+<style>
+:root {
+  --blue: #4aa3df;
+  --blue-light: #eaf6fd;
+  --border: #d8e6f3;
+  --text: #333;
+  --bg: #f5f9fc;
+  --card: #ffffff;
+  --hover: #f8fbfe;
+  --green: #3cb371;
+  --yellow: #f0c24b;
+  --red: #e5533d;
+}
+body.dark {
+  --blue: #5bb3ff;
+  --blue-light: #1e2a36;
+  --border: #2b3a48;
+  --text: #e6edf3;
+  --bg: #0f1720;
+  --card: #141e28;
+  --hover: #1b2733;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg); color: var(--text);
+  margin: 0; padding: 24px;
+}
+h2 { margin: 0 0 16px; color: #2c6fa3; }
+
+.theme-toggle {
+  position: fixed; top: 16px; right: 20px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; user-select: none;
+}
+.theme-toggle input {
+  width: 42px; height: 22px; appearance: none;
+  background: #ccc; border-radius: 999px; position: relative; cursor: pointer;
+}
+.theme-toggle input::before {
+  content: ''; position: absolute; width: 18px; height: 18px;
+  top: 2px; left: 2px; background: #fff; border-radius: 50%;
+  transition: .2s;
+}
+.theme-toggle input:checked { background: var(--blue); }
+.theme-toggle input:checked::before { transform: translateX(20px); }
+
+.filter {
+  background: var(--card); padding: 12px 16px; border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.04); margin-bottom: 16px;
+  display: flex; gap: 32px; flex-wrap: wrap;
+}
+.select-box { display: flex; align-items: center; gap: 8px; }
+select {
+  padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card); color: var(--text);
+}
+.tags { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.tag {
+  background: var(--blue-light); color: var(--text);
+  border-radius: 14px; padding: 4px 10px; font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.tag span:last-child { cursor: pointer; }
+
+table {
+  width: 100%; border-collapse: collapse;
+  background: var(--card); border-radius: 10px; overflow: hidden;
+}
+th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--blue-light); color: #2c6fa3; }
+tr:hover td { background: var(--hover); }
+.country { display: inline-flex; align-items: center; gap: 6px; }
+button {
+  background: var(--blue); color: #fff; border: none;
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+.export-btn {
+  background: #fff; color: var(--blue);
+  border: 1px solid var(--blue);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+}
+.export-btn:hover { background: var(--blue-light); }
+
+.bar-wrap {
+  margin-top: 4px; width: 100%; height: 6px;
+  background: var(--border); border-radius: 999px; overflow: hidden;
+}
+.bar { height: 100%; width: 0; }
+.bar.green  { background: var(--green); }
+.bar.yellow { background: var(--yellow); }
+.bar.red    { background: var(--red); }
+
+.exit-ip { color: #888; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+</style>
+</head>
+
+<body>
+<label class="theme-toggle">
+  ☀️ <input type="checkbox" id="themeToggle"> 🌙
+</label>
+
+<h2>🛰️ Cloudflare ProxyIP 列表</h2>
+
+<div id="stats" style="margin:8px 0 16px;font-size:14px;">
+  目前可用：—｜ 可用国家数：—｜ 上次更新：—
+</div>
+
+<div class="filter">
+  <div class="select-box">
+    国家：
+    <select id="countrySelect"><option value="">选择国家</option></select>
+    <div id="countryTags" class="tags"></div>
+  </div>
+
+  <div class="select-box">
+    端口：
+    <select id="portSelect"><option value="">选择端口</option></select>
+    <div id="portTags" class="tags"></div>
+  </div>
+
+  <div class="select-box">
+    排序：
+    <select id="sortSelect">
+      <option value="default">默认</option>
+      <option value="latency">延迟</option>
+      <option value="success">成功率</option>
+    </select>
+  </div>
+
+  <div class="select-box">
+    <button class="export-btn" onclick="copyAll(true)">复制 IP:port</button>
+    <!-- <button class="export-btn" onclick="copyAll(false)">复制 --resolve 批量</button> -->
+  </div>
+</div>
+
+<table>
+<thead>
+<tr>
+  <th>IP</th><th>端口</th><th>出口 IP</th><th>国家</th>
+  <th>延迟</th><th>成功率</th><th>上次检测</th><th>复制</th>
+</tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
+
+<script>
+/* ---------- 主题 ---------- */
+const toggle = document.getElementById('themeToggle');
+if (localStorage.getItem('theme') === 'dark') {
+  document.body.classList.add('dark');
+  toggle.checked = true;
+}
+toggle.onchange = () => {
+  document.body.classList.toggle('dark', toggle.checked);
+  localStorage.setItem('theme', toggle.checked ? 'dark' : 'light');
+};
+
+/* ---------- 状态 ---------- */
+let data = [];
+const selectedCountries = new Set();
+const selectedPorts     = new Set();
+let sortMethod = 'default';
+
+fetch('proxyips.json')
+  .then(r => r.json())
+  .then(d => {
+    data = d.map((i, idx) => ({ ...i, __index: idx }));
+    init();
+    render();
+  });
+
+function init() {
+  [...new Set(data.map(i => i.country_cn))]
+    .sort()
+    .forEach(c => countrySelect.add(new Option(c, c)));
+  [...new Set(data.map(i => i.port))]
+    .sort((a, b) => a - b)
+    .forEach(p => portSelect.add(new Option(p, p)));
+}
+
+countrySelect.onchange = e => e.target.value && (selectedCountries.add(e.target.value), e.target.value = '', renderTags(), render());
+portSelect.onchange    = e => e.target.value && (selectedPorts.add(e.target.value),   e.target.value = '', renderTags(), render());
+sortSelect.onchange    = e => (sortMethod = e.target.value, render());
+
+function renderTags() {
+  renderTagGroup('countryTags', selectedCountries, true);
+  renderTagGroup('portTags', selectedPorts);
+}
+
+function renderTagGroup(id, set, withFlag) {
+  const box = document.getElementById(id);
+  box.innerHTML = '';
+  [...set].forEach(v => {
+    const t = document.createElement('div');
+    const code = withFlag ? data.find(i => i.country_cn === v)?.country : '';
+    t.className = 'tag';
+    t.innerHTML = `${code ? `<span class="fi fi-${code.toLowerCase()}"></span>` : ''}${v}<span>×</span>`;
+    t.lastChild.onclick = () => (set.delete(v), renderTags(), render());
+    box.appendChild(t);
+  });
+}
+
+function rateBar(s, t) {
+  if (!t) return '';
+  const p = Math.min(100, s / t * 100);
+  return `<div class="bar-wrap"><div class="bar ${p <= 40 ? 'red' : p <= 70 ? 'yellow' : 'green'}" style="width:${p}%"></div></div>`;
+}
+function latencyBar(ms) {
+  const p = Math.min(100, ms / 5000 * 100);
+  return `<div class="bar-wrap"><div class="bar ${ms <= 500 ? 'green' : ms <= 1500 ? 'yellow' : 'red'}" style="width:${p}%"></div></div>`;
+}
+
+function updateStats(list) {
+  const available = list.filter(i => i.latency > 0).length;
+  const countries = new Set(list.filter(i => i.latency > 0).map(i => i.country)).size;
+  const last = Math.max(0, ...list.map(i => i.last_check || 0));
+  stats.textContent =
+    `目前可用：${available} ｜ 可用国家数：${countries} ｜ 上次更新：${last ? ago(last) : '—'}`;
+}
+
+function render() {
+  tbody.innerHTML = '';
+  let list = data.filter(i =>
+    (!selectedCountries.size || selectedCountries.has(i.country_cn)) &&
+    (!selectedPorts.size    || selectedPorts.has(String(i.port)))
+  );
+
+  if (sortMethod === 'latency')
+    list = list.slice().sort((a, b) => a.latency - b.latency || a.__index - b.__index);
+  if (sortMethod === 'success')
+    list = list.slice().sort((a, b) => (b.success / b.total || 0) - (a.success / a.total || 0) || a.__index - b.__index);
+
+  updateStats(list);
+
+  list.forEach(i => {
+    const rate = i.total < 3
+      ? '新节点 (测试次数小于3)'
+      : `${(i.success / i.total * 100).toFixed(1)}% (${i.success}/${i.total})`;
+
+    tbody.insertAdjacentHTML('beforeend', `
+<tr>
+  <td>${i.ip}</td>
+  <td>${i.port}</td>
+  <td class="exit-ip">${i.exit_ip || '—'}</td>
+  <td><span class="country"><span class="fi fi-${i.country.toLowerCase()}"></span>${i.country_cn}</span></td>
+  <td>${i.latency} ms${latencyBar(i.latency)}</td>
+  <td>${rate}${rateBar(i.success, i.total)}</td>
+  <td>${ago(i.last_check)}</td>
+  <td><button onclick="copy('${i.ip}:${i.port}')">复制</button></td>
+</tr>`);
+  });
+}
+
+function getFilteredList() {
+  return data.filter(i =>
+    (!selectedCountries.size || selectedCountries.has(i.country_cn)) &&
+    (!selectedPorts.size    || selectedPorts.has(String(i.port)))
+  );
+}
+
+function copyAll(asPlain) {
+  const list = getFilteredList();
+  if (!list.length) { alert('当前筛选结果为空'); return; }
+
+  const lines = list.map(i => {
+    // IPv6 在 --resolve 中需要保留方括号
+    const host = i.ip;
+    return asPlain
+      ? `${host}:${i.port}`
+      : `--resolve api64.ipify.org:${i.port}:${host}`;
+  });
+
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => alert(`已复制 ${lines.length} 条`));
+}
+
+function ago(ts) {
+  if (!ts) return '—';
+  const s = Date.now() / 1000 - ts;
+  return s < 60 ? `${s | 0} 秒前`
+       : s < 3600 ? `${s / 60 | 0} 分钟前`
+       : `${s / 3600 | 0} 小时前`;
+}
+function copy(t) {
+  navigator.clipboard.writeText(t).then(() => alert('已复制 ' + t));
+}
+</script>
+</body>
+</html>
