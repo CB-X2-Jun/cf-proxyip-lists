@@ -4,6 +4,9 @@ concurrency:
   group: proxyip-update
   cancel-in-progress: false
 
+env:
+  PYTHONUNBUFFERED: "1"
+
 on:
   schedule:
     - cron: "*/20 * * * *"   # 按需改
@@ -26,7 +29,7 @@ jobs:
       - name: Run checker
         env:
           IPINFO_TOKEN: ${{ secrets.IPINFO_TOKEN }}
-        run: python scripts/check_proxyip.py
+        run: python -u scripts/check_proxyip.py
 
       - name: Commit & push
         run: |
